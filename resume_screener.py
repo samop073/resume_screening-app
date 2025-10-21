@@ -1,3 +1,11 @@
+!pip install docx2txt
+!pip install streamlit
+!pip install sentence-transformers
+!pip install python-docx
+!pip install PyMuPDF
+!pip install spacy
+!python -m spacy download en_core_web_sm
+
 """
 Resume Screening System - Backend Module
 Refactored for Streamlit compatibility
