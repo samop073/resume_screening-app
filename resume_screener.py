@@ -1,4 +1,3 @@
-!pip install docx2txt
 !pip install streamlit
 !pip install sentence-transformers
 !pip install python-docx
