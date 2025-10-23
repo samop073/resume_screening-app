@@ -14,6 +14,10 @@ import fitz  # PyMuPDF
 import docx2txt
 import spacy
 from sentence_transformers import SentenceTransformer, util
+import nltk
+from difflib import SequenceMatcher  # ✅ Add this line
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 # Initialize models (cached)
 _nlp = None
