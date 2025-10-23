@@ -227,33 +227,88 @@ def rank_resumes(df_resumes: pd.DataFrame, job_desc_text: str,
     jd_skills = set(extract_skills(job_desc_text))
     skill_scores = []
     
+    from difflib import SequenceMatcher
+from sentence_transformers import util
+import numpy as np
+
+def fuzzy_overlap(resume_skills, jd_skills, threshold=0.7):
+    """Compute fuzzy overlap count between resume and JD skills"""
+    matches = 0
+    for r_skill in resume_skills:
+        for jd_skill in jd_skills:
+            ratio = SequenceMatcher(None, r_skill.lower(), jd_skill.lower()).ratio()
+            if ratio >= threshold:
+                matches += 1
+                break  # Avoid double counting
+    return matches
+
+
+def semantic_skill_similarity(resume_skills, jd_skills, model):
+    """Compute semantic similarity between skill phrases using embeddings"""
+    if not resume_skills or not jd_skills:
+        return 0.0
+
+    resume_embs = model.encode(resume_skills, convert_to_tensor=True)
+    jd_embs = model.encode(jd_skills, convert_to_tensor=True)
+
+    # Compute cosine similarity matrix
+    sim_matrix = util.cos_sim(resume_embs, jd_embs).cpu().numpy()
+
+    # Take max match per resume skill and average
+    best_matches = sim_matrix.max(axis=1)
+    return float(np.mean(best_matches))
+
+
+def rank_resumes(df_resumes: pd.DataFrame, job_desc_text: str, 
+                 top_k=10, skill_weight=0.4, semantic_weight=0.6) -> pd.DataFrame:
+    """Rank resumes against job description with improved skill scoring"""
+    
+    if len(df_resumes) == 0:
+        return pd.DataFrame()
+    
+    model = get_model()
+    resume_embs, jd_emb, jd_skills_str = prepare_embeddings(df_resumes, job_desc_text)
+    
+    # Step 1: Compute semantic similarity (resume vs JD)
+    cos_scores = util.cos_sim(resume_embs, jd_emb)[:, 0].cpu().numpy()
+    
+    # Step 2: Extract job description skills
+    jd_skills = extract_skills(job_desc_text)
+    if not jd_skills:
+        print("⚠️ No skills detected in Job Description. Add explicit skills list for better results.")
+    
+    # Step 3: Compute skill match scores
+    skill_scores = []
     for skills in df_resumes["skills"]:
         if not skills:
             skill_scores.append(0.0)
-        else:
-            overlap = len(set(skills).intersection(jd_skills))
-            denom = max(1, len(jd_skills))
-            skill_scores.append(overlap / denom)
+            continue
+        
+        # Combine fuzzy and semantic skill matching
+        fuzzy_matches = fuzzy_overlap(skills, jd_skills)
+        fuzzy_score = fuzzy_matches / max(1, len(jd_skills))
+
+        semantic_score = semantic_skill_similarity(skills, jd_skills, model)
+        
+        # Blend both (70% semantic, 30% fuzzy)
+        combined_skill_score = 0.7 * semantic_score + 0.3 * fuzzy_score
+        skill_scores.append(combined_skill_score)
     
     skill_scores = np.array(skill_scores)
     
-    # Normalize semantic scores to 0-1
+    # Step 4: Normalize semantic similarity to 0–1
     cos_min, cos_max = cos_scores.min(), cos_scores.max()
-    cos_range = cos_max - cos_min
-    if cos_range > 0:
-        normalized_cos = (cos_scores - cos_min) / cos_range
-    else:
-        normalized_cos = cos_scores
+    normalized_cos = (cos_scores - cos_min) / (cos_max - cos_min) if cos_max > cos_min else cos_scores
     
-    # Combined score
+    # Step 5: Final weighted score
     final_scores = semantic_weight * normalized_cos + skill_weight * skill_scores
     
-    # Add scores to dataframe
+    # Step 6: Append results
     df = df_resumes.copy()
-    df["semantic_score"] = cos_scores
-    df["skill_score"] = skill_scores
-    df["final_score"] = final_scores
+    df["semantic_score"] = np.round(cos_scores, 3)
+    df["skill_score"] = np.round(skill_scores, 3)
+    df["final_score"] = np.round(final_scores, 3)
     
-    # Sort and return top K
+    # Step 7: Sort and return top candidates
     df = df.sort_values("final_score", ascending=False).reset_index(drop=True)
     return df.head(top_k)
